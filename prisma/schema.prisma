@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model FoodItem {
+  id          String       @id @default(cuid())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  brand       String
+  type        String
+  weight      Decimal      @db.Decimal(10, 2)  // in grams or oz
+  cost        Decimal      @db.Decimal(10, 2)  // in user's currency
+  description String?
+  imageUrl    String?
+  isActive    Boolean      @default(true)
+
+  // Nutritional information (optional)
+  protein     Decimal?     @db.Decimal(10, 2)
+  fat         Decimal?     @db.Decimal(10, 2)
+  fiber       Decimal?     @db.Decimal(10, 2)
+
+  // Relationships
+  mealPlanItems MealPlanItem[]
+
+  @@index([brand, type])
+}
+
+// Dogs the user is creating meal plans for
+model Dog {
+  id          String       @id @default(cuid())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  name        String
+  weight      Decimal      @db.Decimal(10, 2)  // in kg or lbs
+  age         Decimal      @db.Decimal(5, 2)   // in years
+  activityLevel String     // e.g., Low, Moderate, High
+  portionSize Decimal      @db.Decimal(10, 2)  // daily portion in grams or oz
+
+  // Relationships
+  mealPlans   MealPlan[]
+}
+
+// Saved meal plans
+model MealPlan {
+  id          String       @id @default(cuid())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  name        String
+  startDate   DateTime?
+  endDate     DateTime?
+  durationDays Int
+  mealsPerDay Int
+  dogId       String?      // Optional: can be for a specific dog or generic
+  totalCost   Decimal      @db.Decimal(10, 2)
+  notes       String?
+
+  // Relationships
+  dog         Dog?         @relation(fields: [dogId], references: [id])
+  items       MealPlanItem[]
+
+  @@index([dogId])
+}
+
+// Individual food items within a meal plan
+model MealPlanItem {
+  id          String       @id @default(cuid())
+  mealPlanId  String
+  foodItemId  String
+  quantityPerMeal Decimal  @db.Decimal(10, 2)  // grams or oz per meal
+  totalQuantity   Decimal  @db.Decimal(10, 2)  // total for plan duration
+
+  // Relationships
+  mealPlan    MealPlan     @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  foodItem    FoodItem     @relation(fields: [foodItemId], references: [id])
+
+  @@index([mealPlanId])
+  @@index([foodItemId])
+}
+
+// User settings and preferences
+model UserPreference {
+  id          String       @id @default(cuid())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  weightUnit  String       @default("kg")     // kg or lbs
+  measureUnit String       @default("g")      // g or oz
+  currency    String       @default("GBP")
+  defaultMealsPerDay Int   @default(2)
+  theme       String       @default("light")
+}
