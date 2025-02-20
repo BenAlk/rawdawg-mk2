@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -79,6 +76,7 @@ model MealPlanItem {
   foodItemId  String
   quantityPerMeal Decimal  @db.Decimal(10, 2)  // grams or oz per meal
   totalQuantity   Decimal  @db.Decimal(10, 2)  // total for plan duration
+  numberOfMeals   Int?     // Number of meals this food appears in
 
   // Relationships
   mealPlan    MealPlan     @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)

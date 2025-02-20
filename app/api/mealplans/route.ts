@@ -14,6 +14,11 @@ const mealPlanItemSchema = z.object({
 		.string()
 		.or(z.number())
 		.pipe(z.coerce.number().positive('Total quantity must be positive')),
+	numberOfMeals: z
+		.number()
+		.int()
+		.positive('Number of meals must be positive')
+		.optional(),
 })
 
 // Schema for validating meal plan creation
@@ -44,17 +49,7 @@ const mealPlanSchema = z.object({
 
 export async function GET(request: NextRequest) {
 	try {
-		const searchParams = request.nextUrl.searchParams
-		const dogId = searchParams.get('dogId')
-
-		const where: any = {}
-		if (dogId) {
-			where.dogId = dogId
-		}
-
 		const mealPlans = await prisma.mealPlan.findMany({
-			where,
-			orderBy: { updatedAt: 'desc' },
 			include: {
 				dog: true,
 				items: {
@@ -63,9 +58,11 @@ export async function GET(request: NextRequest) {
 					},
 				},
 			},
+			orderBy: {
+				createdAt: 'desc',
+			},
 		})
 
-		// Always return a valid response, even if empty
 		return NextResponse.json(mealPlans)
 	} catch (error) {
 		console.error('Error fetching meal plans:', error)
@@ -83,11 +80,7 @@ export async function POST(request: NextRequest) {
 		// Validate request body
 		const validatedData = mealPlanSchema.parse(body)
 
-		// Calculate total cost based on food items
-		let totalCost = new Decimal(0)
-		const itemsData: any[] = []
-
-		// If there are no items, create plan with empty items array
+		// If there are no items, create plan with zero cost
 		if (validatedData.items.length === 0) {
 			const newMealPlan = await prisma.mealPlan.create({
 				data: {
@@ -119,7 +112,10 @@ export async function POST(request: NextRequest) {
 			},
 		})
 
-		// Prepare items data and calculate total cost
+		// Calculate total cost with corrected cost calculation
+		let totalCost = new Decimal(0)
+		const itemsData: any[] = []
+
 		for (const item of validatedData.items) {
 			const foodItem = foodItems.find((f) => f.id === item.foodItemId)
 			if (!foodItem) {
@@ -129,16 +125,29 @@ export async function POST(request: NextRequest) {
 				)
 			}
 
-			const itemCost = new Decimal(foodItem.cost).mul(
-				new Decimal(item.totalQuantity)
+			// CORRECTED COST CALCULATION:
+			// Calculate cost per unit by dividing total package cost by total package weight
+			const costPerUnit = new Decimal(foodItem.cost).div(
+				new Decimal(foodItem.weight)
 			)
+
+			// Calculate item cost by multiplying cost per unit by total quantity used
+			const itemCost = costPerUnit.mul(new Decimal(item.totalQuantity))
 			totalCost = totalCost.add(itemCost)
 
-			itemsData.push({
+			// Prepare item data for creating meal plan items
+			const itemData: any = {
 				foodItemId: item.foodItemId,
 				quantityPerMeal: new Decimal(item.quantityPerMeal).toString(),
 				totalQuantity: new Decimal(item.totalQuantity).toString(),
-			})
+			}
+
+			// Include number of meals if provided
+			if (item.numberOfMeals) {
+				itemData.numberOfMeals = item.numberOfMeals
+			}
+
+			itemsData.push(itemData)
 		}
 
 		// Create the meal plan with calculated total cost
@@ -151,13 +160,9 @@ export async function POST(request: NextRequest) {
 				mealsPerDay: validatedData.mealsPerDay,
 				dogId: validatedData.dogId,
 				notes: validatedData.notes,
-				totalCost: totalCost.toString(),
+				totalCost: totalCost.toString(), // Store cost as string for Decimal compatibility
 				items: {
-					create: itemsData.map((item) => ({
-						foodItemId: item.foodItemId,
-						quantityPerMeal: item.quantityPerMeal,
-						totalQuantity: item.totalQuantity,
-					})),
+					create: itemsData,
 				},
 			},
 			include: {

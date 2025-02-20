@@ -17,6 +17,7 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 }) => {
 	const {
 		filteredItems,
+		items,
 		isLoading,
 		error,
 		filter,
@@ -39,19 +40,21 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 		null
 	)
 
+	// Fetch items on initial load
 	useEffect(() => {
 		fetchItems()
 	}, [fetchItems])
 
+	// Extract unique brands and types when items change
 	useEffect(() => {
-		// Extract unique brands and types for filters
-		const allItems = useInventoryStore.getState().items
-		const uniqueBrands = [...new Set(allItems.map((item) => item.brand))].sort()
-		const uniqueTypes = [...new Set(allItems.map((item) => item.type))].sort()
+		if (items.length > 0) {
+			const uniqueBrands = [...new Set(items.map((item) => item.brand))].sort()
+			const uniqueTypes = [...new Set(items.map((item) => item.type))].sort()
 
-		setBrands(uniqueBrands)
-		setTypes(uniqueTypes)
-	}, [fetchItems])
+			setBrands(uniqueBrands)
+			setTypes(uniqueTypes)
+		}
+	}, [items])
 
 	// Handle search input with debounce
 	useEffect(() => {
@@ -77,14 +80,14 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 	}
 
 	const handleFilterChange = (
-		e: React.ChangeEvent<HTMLSelectElement>,
+		value: string,
 		filterType: 'brands' | 'types'
 	) => {
-		const values = Array.from(
-			e.target.selectedOptions,
-			(option) => option.value
-		)
-		setFilter({ [filterType]: values })
+		// For single select, we pass an array with just the selected value,
+		// or an empty array if "All" is selected
+		setFilter({
+			[filterType]: value === 'all' ? [] : [value],
+		})
 	}
 
 	const handleToggleActive = async (id: string, e: React.MouseEvent) => {
@@ -132,7 +135,6 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 		return <div className='flex justify-center p-8'>Loading inventory...</div>
 	}
 
-	// Main content
 	return (
 		<div>
 			{/* Selection Tools (when selectable is true) */}
@@ -188,12 +190,11 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 					</label>
 					<select
 						id='brandFilter'
-						multiple
-						size={1}
-						value={filter.brands}
-						onChange={(e) => handleFilterChange(e, 'brands')}
+						value={filter.brands.length > 0 ? filter.brands[0] : 'all'}
+						onChange={(e) => handleFilterChange(e.target.value, 'brands')}
 						className='w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
 					>
+						<option value='all'>All Brands</option>
 						{brands.map((brand) => (
 							<option
 								key={brand}
@@ -213,12 +214,11 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 					</label>
 					<select
 						id='typeFilter'
-						multiple
-						size={1}
-						value={filter.types}
-						onChange={(e) => handleFilterChange(e, 'types')}
+						value={filter.types.length > 0 ? filter.types[0] : 'all'}
+						onChange={(e) => handleFilterChange(e.target.value, 'types')}
 						className='w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
 					>
+						<option value='all'>All Types</option>
 						{types.map((type) => (
 							<option
 								key={type}
@@ -229,6 +229,21 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 						))}
 					</select>
 				</div>
+			</div>
+
+			{/* Active/Inactive Filter Toggle */}
+			<div className='mb-4'>
+				<label className='inline-flex items-center'>
+					<input
+						type='checkbox'
+						checked={filter.onlyActive}
+						onChange={(e) => setFilter({ onlyActive: e.target.checked })}
+						className='h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500'
+					/>
+					<span className='ml-2 text-sm text-gray-700'>
+						Show only active items
+					</span>
+				</label>
 			</div>
 
 			{/* Inventory Table */}
@@ -340,6 +355,9 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 											{item.cost.div(item.weight).mul(1000).toFixed(2)}/kg
 										</div>
 									</td>
+									<td className='whitespace-nowrap px-3 py-4 text-right text-sm'>
+										{item.weight.toFixed(0)} {measureUnit}
+									</td>
 									{showActions && (
 										<td className='whitespace-nowrap px-3 py-4 text-center text-sm'>
 											<div className='flex justify-center space-x-2'>
@@ -404,8 +422,7 @@ const InventoryDisplay: React.FC<InventoryDisplayProps> = ({
 
 			{/* Items count */}
 			<div className='mt-4 text-sm text-gray-500'>
-				Showing {filteredItems.length} of{' '}
-				{useInventoryStore.getState().items.length} items
+				Showing {filteredItems.length} of {items.length} items
 			</div>
 		</div>
 	)

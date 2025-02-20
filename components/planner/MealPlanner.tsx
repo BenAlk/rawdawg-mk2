@@ -3,6 +3,25 @@ import { Dog, FoodItem } from '@prisma/client'
 import { Decimal } from 'decimal.js'
 import React, { useEffect, useState } from 'react'
 
+const formatQuantity = (quantity: Decimal, measureUnit: string) => {
+	// For metric, display in kg if over 1000g
+	if (measureUnit === 'g' && quantity.greaterThanOrEqualTo(1000)) {
+		return `${quantity.div(1000).toFixed(2)} kg`
+	}
+
+	// For imperial, display in lb if over 16oz
+	if (measureUnit === 'oz' && quantity.greaterThanOrEqualTo(16)) {
+		return `${quantity.div(16).toFixed(2)} lb`
+	}
+
+	// Otherwise display in original units
+	return `${quantity.toFixed(1)} ${measureUnit}`
+}
+
+interface MealPlannerProps {
+	onClose?: () => void
+}
+
 interface MealPlannerProps {
 	onClose?: () => void
 }
@@ -22,6 +41,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 		updatePlanDetails,
 		addFoodItem,
 		updateFoodItemQuantity,
+		updateFoodItemMealCount,
 		removeFoodItem,
 		undo,
 		redo,
@@ -34,6 +54,15 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 	const [searchQuery, setSearchQuery] = useState('')
 	const [filteredFoods, setFilteredFoods] = useState<FoodItem[]>([])
 	const [showFoodSelector, setShowFoodSelector] = useState(false)
+	const [addFoodData, setAddFoodData] = useState<{
+		food: FoodItem | null
+		quantityPerMeal: string
+		numberOfMeals: string
+	}>({
+		food: null,
+		quantityPerMeal: '',
+		numberOfMeals: '',
+	})
 
 	// Load initial data
 	useEffect(() => {
@@ -77,7 +106,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 				dogId: selectedDog.id,
 			})
 		}
-	}, [selectedDog, currentPlan])
+	}, [selectedDog, currentPlan, updatePlanDetails])
 
 	const handleDogChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
 		const dogId = e.target.value
@@ -118,17 +147,55 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 		})
 	}
 
-	const handleAddFood = (food: FoodItem) => {
+	const selectFoodForAdd = (food: FoodItem) => {
 		// Default quantity based on dog's portion size if available
-		let defaultQuantity = new Decimal(100) // Default to 100g or oz per meal
+		let defaultQuantity = '100' // Default to 100g or oz per meal
+		let totalMeals = currentPlan
+			? currentPlan.durationDays * currentPlan.mealsPerDay
+			: 0
+		let defaultMealCount = totalMeals.toString()
 
 		if (selectedDog && currentPlan) {
 			// Calculate individual portion size based on dog's daily needs and meals per day
-			defaultQuantity = selectedDog.portionSize.div(currentPlan.mealsPerDay)
+			defaultQuantity = selectedDog.portionSize
+				.div(currentPlan.mealsPerDay)
+				.toFixed(0)
 		}
 
-		addFoodItem(food, defaultQuantity)
+		setAddFoodData({
+			food,
+			quantityPerMeal: defaultQuantity,
+			numberOfMeals: defaultMealCount,
+		})
+	}
+
+	const handleAddFood = () => {
+		if (!addFoodData.food) return
+
+		const quantityPerMeal = parseFloat(addFoodData.quantityPerMeal)
+		const numberOfMeals = parseInt(addFoodData.numberOfMeals, 10)
+
+		if (
+			isNaN(quantityPerMeal) ||
+			quantityPerMeal <= 0 ||
+			isNaN(numberOfMeals) ||
+			numberOfMeals <= 0
+		) {
+			return
+		}
+
+		const totalMeals = currentPlan
+			? currentPlan.durationDays * currentPlan.mealsPerDay
+			: 0
+		const mealCount = Math.min(numberOfMeals, totalMeals)
+
+		addFoodItem(addFoodData.food, new Decimal(quantityPerMeal), mealCount)
 		setShowFoodSelector(false)
+		setAddFoodData({
+			food: null,
+			quantityPerMeal: '',
+			numberOfMeals: '',
+		})
 	}
 
 	const handleQuantityChange = (
@@ -138,6 +205,20 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 		const quantity = parseFloat(e.target.value)
 		if (!isNaN(quantity) && quantity > 0) {
 			updateFoodItemQuantity(foodId, quantity)
+		}
+	}
+
+	const handleMealCountChange = (
+		foodId: string,
+		e: React.ChangeEvent<HTMLInputElement>
+	) => {
+		const mealCount = parseInt(e.target.value, 10)
+		if (!isNaN(mealCount) && mealCount > 0) {
+			const totalMeals = currentPlan
+				? currentPlan.durationDays * currentPlan.mealsPerDay
+				: 0
+			const validMealCount = Math.min(mealCount, totalMeals)
+			updateFoodItemMealCount(foodId, validMealCount)
 		}
 	}
 
@@ -175,6 +256,9 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 	)
 
 	const dailyCost = totalCost.div(currentPlan.durationDays)
+
+	// Calculate total meals in the plan
+	const totalMealsInPlan = currentPlan.durationDays * currentPlan.mealsPerDay
 
 	return (
 		<div className='space-y-6'>
@@ -319,6 +403,9 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 			<div className='rounded-lg border border-gray-200 shadow'>
 				<div className='border-b border-gray-200 bg-gray-50 px-4 py-3'>
 					<h3 className='text-lg font-medium text-gray-700'>Food Items</h3>
+					<p className='text-sm text-gray-500'>
+						Total meals in plan: {totalMealsInPlan}
+					</p>
 				</div>
 
 				{currentPlan.items.length === 0 ? (
@@ -347,6 +434,12 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 										className='px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500'
 									>
 										Per Meal
+									</th>
+									<th
+										scope='col'
+										className='px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500'
+									>
+										# of Meals
 									</th>
 									<th
 										scope='col'
@@ -398,8 +491,30 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 												</span>
 											</div>
 										</td>
+										<td className='whitespace-nowrap px-3 py-4 text-right text-sm'>
+											<div className='flex items-center justify-end'>
+												<input
+													type='number'
+													min='1'
+													max={totalMealsInPlan}
+													value={
+														item.numberOfMeals ||
+														Math.ceil(
+															item.totalQuantity
+																.div(item.quantityPerMeal)
+																.toNumber()
+														)
+													}
+													onChange={(e) => handleMealCountChange(item.id, e)}
+													className='w-20 rounded-md border border-gray-300 px-2 py-1 text-right text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
+												/>
+												<span className='ml-1 text-gray-500'>
+													of {totalMealsInPlan}
+												</span>
+											</div>
+										</td>
 										<td className='whitespace-nowrap px-3 py-4 text-right text-sm text-gray-500'>
-											{item.totalQuantity.toFixed(1)} {measureUnit}
+											{formatQuantity(item.totalQuantity, measureUnit)}
 										</td>
 										<td className='whitespace-nowrap px-3 py-4 text-right text-sm text-gray-500'>
 											{currency}{' '}
@@ -446,9 +561,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 					<div>
 						<h4 className='text-sm font-medium text-gray-500'>Total Weight</h4>
 						<p className='mt-1 text-2xl font-semibold text-gray-900'>
-							{totalWeight.toFixed(1)} {measureUnit}
+							{formatQuantity(totalWeight, measureUnit)}
 						</p>
 					</div>
+
 					<div>
 						<h4 className='text-sm font-medium text-gray-500'>
 							Average Meal Size
@@ -469,7 +585,14 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 					<div className='relative max-h-[80vh] w-full max-w-3xl overflow-auto rounded-lg bg-white p-6 shadow-xl'>
 						<button
 							type='button'
-							onClick={() => setShowFoodSelector(false)}
+							onClick={() => {
+								setShowFoodSelector(false)
+								setAddFoodData({
+									food: null,
+									quantityPerMeal: '',
+									numberOfMeals: '',
+								})
+							}}
 							className='absolute right-4 top-4 text-gray-400 hover:text-gray-500'
 						>
 							<span className='sr-only'>Close</span>
@@ -489,65 +612,224 @@ const MealPlanner: React.FC<MealPlannerProps> = ({ onClose }) => {
 						</button>
 
 						<h2 className='text-xl font-semibold text-gray-900'>
-							Select Food Item
+							{addFoodData.food ? 'Configure Food' : 'Select Food Item'}
 						</h2>
 
-						<div className='mt-4'>
-							<input
-								type='text'
-								placeholder='Search foods...'
-								value={searchQuery}
-								onChange={(e) => setSearchQuery(e.target.value)}
-								className='block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
-							/>
-						</div>
+						{!addFoodData.food ? (
+							<>
+								<div className='mt-4'>
+									<input
+										type='text'
+										placeholder='Search foods...'
+										value={searchQuery}
+										onChange={(e) => setSearchQuery(e.target.value)}
+										className='block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
+									/>
+								</div>
 
-						<div className='mt-4 max-h-[60vh] overflow-y-auto'>
-							{filteredFoods.length === 0 ? (
-								<p className='py-4 text-center text-gray-500'>
-									No matching food items found
-								</p>
-							) : (
-								<ul className='divide-y divide-gray-200'>
-									{filteredFoods.map((food) => (
-										<li
-											key={food.id}
-											className='cursor-pointer px-4 py-3 hover:bg-gray-50'
-											onClick={() => handleAddFood(food)}
+								<div className='mt-4 max-h-[60vh] overflow-y-auto'>
+									{filteredFoods.length === 0 ? (
+										<p className='py-4 text-center text-gray-500'>
+											No matching food items found
+										</p>
+									) : (
+										<ul className='divide-y divide-gray-200'>
+											{filteredFoods.map((food) => (
+												<li
+													key={food.id}
+													className='cursor-pointer px-4 py-3 hover:bg-gray-50'
+													onClick={() => selectFoodForAdd(food)}
+												>
+													<div className='flex items-start justify-between'>
+														<div>
+															<p className='font-medium text-gray-900'>
+																{food.brand}
+															</p>
+															<p className='text-sm text-gray-500'>
+																{food.type}
+															</p>
+															{food.description && (
+																<p className='mt-1 text-xs text-gray-500'>
+																	{food.description}
+																</p>
+															)}
+														</div>
+														<div className='text-right'>
+															<p className='text-sm font-medium text-gray-900'>
+																{currency} {new Decimal(food.cost).toFixed(2)} (
+																{currency}{' '}
+																{new Decimal(food.cost)
+																	.div(food.weight)
+																	.mul(1000)
+																	.toFixed(2)}
+																/kg)
+															</p>
+															<p className='text-xs text-gray-500'>
+																{new Decimal(food.weight).toFixed(0)}{' '}
+																{measureUnit} package
+															</p>
+														</div>
+													</div>
+												</li>
+											))}
+										</ul>
+									)}
+								</div>
+							</>
+						) : (
+							<div className='mt-4 space-y-6'>
+								<div className='mb-6 flex items-start space-x-4'>
+									<div className='flex-grow'>
+										<h3 className='text-lg font-medium text-gray-900'>
+											{addFoodData.food.brand} {addFoodData.food.type}
+										</h3>
+										{addFoodData.food.description && (
+											<p className='mt-1 text-sm text-gray-500'>
+												{addFoodData.food.description}
+											</p>
+										)}
+									</div>
+									<div className='text-right'>
+										<p className='text-sm font-medium text-gray-900'>
+											{currency} {new Decimal(addFoodData.food.cost).toFixed(2)}
+										</p>
+										<p className='text-xs text-gray-500'>
+											{new Decimal(addFoodData.food.weight).toFixed(0)}{' '}
+											{measureUnit} package
+										</p>
+									</div>
+								</div>
+
+								<div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
+									<div className='space-y-2'>
+										<label
+											htmlFor='quantityPerMeal'
+											className='block text-sm font-medium text-gray-700'
 										>
-											<div className='flex items-start justify-between'>
-												<div>
-													<p className='font-medium text-gray-900'>
-														{food.brand}
-													</p>
-													<p className='text-sm text-gray-500'>{food.type}</p>
-													{food.description && (
-														<p className='mt-1 text-xs text-gray-500'>
-															{food.description}
-														</p>
-													)}
-												</div>
-												<div className='text-right'>
-													<p className='text-sm font-medium text-gray-900'>
-														{currency} {new Decimal(food.cost).toFixed(2)} (
-														{currency}{' '}
-														{new Decimal(food.cost)
-															.div(food.weight)
-															.mul(1000)
-															.toFixed(2)}
-														/kg)
-													</p>
-													<p className='text-xs text-gray-500'>
-														{new Decimal(food.weight).toFixed(0)} {measureUnit}{' '}
-														package
-													</p>
-												</div>
+											Quantity Per Meal
+										</label>
+										<div className='flex items-center'>
+											<input
+												id='quantityPerMeal'
+												type='number'
+												min='0.1'
+												step='0.1'
+												value={addFoodData.quantityPerMeal}
+												onChange={(e) =>
+													setAddFoodData({
+														...addFoodData,
+														quantityPerMeal: e.target.value,
+													})
+												}
+												className='block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
+											/>
+											<span className='ml-2 text-gray-500'>{measureUnit}</span>
+										</div>
+										<p className='text-xs text-gray-500'>
+											How much of this food to include in each meal
+										</p>
+									</div>
+
+									<div className='space-y-2'>
+										<label
+											htmlFor='numberOfMeals'
+											className='block text-sm font-medium text-gray-700'
+										>
+											Number of Meals
+										</label>
+										<div className='flex items-center'>
+											<input
+												id='numberOfMeals'
+												type='number'
+												min='1'
+												max={totalMealsInPlan}
+												value={addFoodData.numberOfMeals}
+												onChange={(e) =>
+													setAddFoodData({
+														...addFoodData,
+														numberOfMeals: e.target.value,
+													})
+												}
+												className='block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
+											/>
+											<span className='ml-2 text-gray-500'>
+												of {totalMealsInPlan}
+											</span>
+										</div>
+										<p className='text-xs text-gray-500'>
+											In how many meals this food should be included
+										</p>
+									</div>
+								</div>
+
+								{/* Food Preview calculations */}
+								{addFoodData.quantityPerMeal && addFoodData.numberOfMeals && (
+									<div className='rounded-md bg-blue-50 p-4'>
+										<h4 className='text-sm font-medium text-blue-700'>
+											Preview
+										</h4>
+										<div className='mt-2 grid grid-cols-2 gap-4 text-sm'>
+											<div>
+												<span className='font-medium'>Total Quantity:</span>{' '}
+												{formatQuantity(
+													new Decimal(
+														parseFloat(addFoodData.quantityPerMeal) *
+															parseInt(addFoodData.numberOfMeals, 10)
+													),
+													measureUnit
+												)}
 											</div>
-										</li>
-									))}
-								</ul>
-							)}
-						</div>
+											<div>
+												<span className='font-medium'>Total Cost:</span>{' '}
+												{currency}{' '}
+												{new Decimal(addFoodData.food.cost)
+													.div(new Decimal(addFoodData.food.weight))
+													.mul(
+														parseFloat(addFoodData.quantityPerMeal) *
+															parseInt(addFoodData.numberOfMeals, 10)
+													)
+													.toFixed(2)}
+											</div>
+											<div>
+												<span className='font-medium'>Coverage:</span>{' '}
+												{Math.round(
+													(parseInt(addFoodData.numberOfMeals, 10) /
+														totalMealsInPlan) *
+														100
+												)}
+												% of meals
+											</div>
+										</div>
+									</div>
+								)}
+
+								<div className='flex justify-end space-x-3 pt-4'>
+									<button
+										type='button'
+										onClick={() =>
+											setAddFoodData({
+												food: null,
+												quantityPerMeal: '',
+												numberOfMeals: '',
+											})
+										}
+										className='rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50'
+									>
+										Back to List
+									</button>
+									<button
+										type='button'
+										onClick={handleAddFood}
+										disabled={
+											!addFoodData.quantityPerMeal || !addFoodData.numberOfMeals
+										}
+										className='rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed'
+									>
+										Add to Plan
+									</button>
+								</div>
+							</div>
+						)}
 					</div>
 				</div>
 			)}

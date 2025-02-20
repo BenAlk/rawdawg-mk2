@@ -4,6 +4,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
 // Schema for meal plan updates
+const mealPlanItemSchema = z.object({
+	foodItemId: z.string(),
+	quantityPerMeal: z
+		.string()
+		.or(z.number())
+		.pipe(z.coerce.number().positive('Quantity per meal must be positive')),
+	totalQuantity: z
+		.string()
+		.or(z.number())
+		.pipe(z.coerce.number().positive('Total quantity must be positive')),
+	numberOfMeals: z
+		.number()
+		.int()
+		.positive('Number of meals must be positive')
+		.optional(),
+})
+
 const mealPlanUpdateSchema = z.object({
 	name: z.string().min(1, 'Name is required').optional(),
 	startDate: z
@@ -28,23 +45,7 @@ const mealPlanUpdateSchema = z.object({
 		.optional(),
 	dogId: z.string().optional().nullable(),
 	notes: z.string().optional().nullable(),
-	items: z
-		.array(
-			z.object({
-				foodItemId: z.string(),
-				quantityPerMeal: z
-					.string()
-					.or(z.number())
-					.pipe(
-						z.coerce.number().positive('Quantity per meal must be positive')
-					),
-				totalQuantity: z
-					.string()
-					.or(z.number())
-					.pipe(z.coerce.number().positive('Total quantity must be positive')),
-			})
-		)
-		.optional(),
+	items: z.array(mealPlanItemSchema).optional(),
 })
 
 export async function GET(
@@ -124,7 +125,7 @@ export async function PUT(
 				},
 			})
 
-			// Calculate total cost
+			// Calculate total cost with CORRECTED calculation
 			for (const item of validatedData.items) {
 				const foodItem = foodItems.find((f) => f.id === item.foodItemId)
 				if (!foodItem) {
@@ -134,9 +135,11 @@ export async function PUT(
 					)
 				}
 
-				const itemCost = new Decimal(foodItem.cost).mul(
-					new Decimal(item.totalQuantity)
+				// NEW COST CALCULATION: Use cost per unit * total quantity
+				const costPerUnit = new Decimal(foodItem.cost).div(
+					new Decimal(foodItem.weight)
 				)
+				const itemCost = costPerUnit.mul(new Decimal(item.totalQuantity))
 				totalCost = totalCost.add(itemCost)
 			}
 
@@ -155,6 +158,7 @@ export async function PUT(
 							foodItemId: item.foodItemId,
 							quantityPerMeal: new Decimal(item.quantityPerMeal).toString(),
 							totalQuantity: new Decimal(item.totalQuantity).toString(),
+							numberOfMeals: item.numberOfMeals,
 						},
 					})
 				)

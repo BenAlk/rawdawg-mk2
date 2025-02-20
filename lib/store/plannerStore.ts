@@ -16,6 +16,7 @@ interface PlannerFoodItem
 	totalQuantity: Decimal
 	totalCost: Decimal
 	costPerKg: Decimal
+	numberOfMeals: number // New field to store how many meals this food appears in
 }
 
 interface PlannerMealPlan extends Omit<MealPlan, 'totalCost'> {
@@ -57,11 +58,16 @@ interface PlannerActions {
 	deletePlan: (planId: string) => Promise<void>
 
 	// Food item management within plan
-	addFoodItem: (foodItem: FoodItem, quantityPerMeal: number | Decimal) => void
+	addFoodItem: (
+		foodItem: FoodItem,
+		quantityPerMeal: number | Decimal,
+		numberOfMeals?: number
+	) => void
 	updateFoodItemQuantity: (
 		foodItemId: string,
 		quantityPerMeal: number | Decimal
 	) => void
+	updateFoodItemMealCount: (foodItemId: string, numberOfMeals: number) => void
 	removeFoodItem: (foodItemId: string) => void
 
 	// Unit conversion
@@ -265,6 +271,16 @@ export const usePlannerStore = create<PlannerStore>()(
 										)
 										const costPerKg = costPerUnit.mul(1000)
 
+										// Extract the number of meals this item is used in
+										// If not available in the data, calculate from quantity
+										const mealCount =
+											item.numberOfMeals ||
+											Math.ceil(
+												new Decimal(item.totalQuantity || 0)
+													.div(new Decimal(item.quantityPerMeal || 1))
+													.toNumber()
+											)
+
 										return {
 											...item.foodItem,
 											weight: new Decimal(item.foodItem.weight || 0),
@@ -284,6 +300,7 @@ export const usePlannerStore = create<PlannerStore>()(
 												new Decimal(item.totalQuantity || 0)
 											),
 											costPerKg: costPerKg, // Add cost per kg
+											numberOfMeals: mealCount,
 										}
 									})
 									.filter(Boolean)
@@ -359,8 +376,15 @@ export const usePlannerStore = create<PlannerStore>()(
 							foodItemId: item.id,
 							quantityPerMeal: item.quantityPerMeal.toString(),
 							totalQuantity: item.totalQuantity.toString(),
+							numberOfMeals: item.numberOfMeals,
 						})),
 					}
+
+					// Log data being sent to API
+					console.log(
+						'Submitting plan data:',
+						JSON.stringify(planToSave, null, 2)
+					)
 
 					const method = currentPlan.id ? 'PUT' : 'POST'
 					const url = currentPlan.id
@@ -375,15 +399,38 @@ export const usePlannerStore = create<PlannerStore>()(
 						body: JSON.stringify(planToSave),
 					})
 
-					if (!response.ok) {
-						const errorData = await response.json().catch(() => ({}))
+					// Check the raw response text first for debugging
+					const responseText = await response.text()
+					console.log(`API ${method} response status:`, response.status)
+					console.log('Raw API response:', responseText)
+
+					// Try to parse the response as JSON
+					let responseData
+					try {
+						responseData = responseText ? JSON.parse(responseText) : {}
+					} catch (parseError) {
+						console.error('Error parsing API response:', parseError)
 						throw new Error(
-							errorData.error ||
-								`Failed to ${currentPlan.id ? 'update' : 'create'} meal plan`
+							`API returned invalid JSON: ${responseText.substring(0, 100)}...`
 						)
 					}
 
-					const savedPlan = await response.json()
+					if (!response.ok) {
+						// Extract detailed error message if available
+						const errorMessage =
+							responseData.error ||
+							responseData.message ||
+							`Failed to ${currentPlan.id ? 'update' : 'create'} meal plan`
+
+						// Include validation details if available
+						const errorDetails = responseData.details
+							? `: ${JSON.stringify(responseData.details)}`
+							: ''
+
+						throw new Error(errorMessage + errorDetails)
+					}
+
+					const savedPlan = responseData
 
 					// Process saved plan with proper decimal values
 					const processedPlan: PlannerMealPlan = {
@@ -393,7 +440,19 @@ export const usePlannerStore = create<PlannerStore>()(
 							? savedPlan.items
 									.map((item: any) => {
 										// Skip items with missing foodItem
-										if (!item.foodItem) return null
+										if (!item.foodItem) {
+											console.warn('Item missing foodItem:', item)
+											return null
+										}
+
+										// Get the number of meals this food appears in
+										const mealCount =
+											item.numberOfMeals ||
+											Math.ceil(
+												new Decimal(item.totalQuantity || 0)
+													.div(new Decimal(item.quantityPerMeal || 1))
+													.toNumber()
+											)
 
 										return {
 											...item.foodItem,
@@ -413,6 +472,10 @@ export const usePlannerStore = create<PlannerStore>()(
 											totalCost: new Decimal(item.foodItem.cost || 0).mul(
 												new Decimal(item.totalQuantity || 0)
 											),
+											costPerKg: new Decimal(item.foodItem.cost || 0)
+												.div(new Decimal(item.foodItem.weight || 1))
+												.mul(1000),
+											numberOfMeals: mealCount,
 										}
 									})
 									.filter(Boolean)
@@ -483,6 +546,15 @@ export const usePlannerStore = create<PlannerStore>()(
 										)
 										const costPerKg = costPerUnit.mul(1000)
 
+										// Get the number of meals this food appears in
+										const mealCount =
+											item.numberOfMeals ||
+											Math.ceil(
+												new Decimal(item.totalQuantity || 0)
+													.div(new Decimal(item.quantityPerMeal || 1))
+													.toNumber()
+											)
+
 										return {
 											...item.foodItem,
 											weight: new Decimal(item.foodItem.weight || 0),
@@ -502,6 +574,7 @@ export const usePlannerStore = create<PlannerStore>()(
 												new Decimal(item.totalQuantity || 0)
 											),
 											costPerKg: costPerKg, // Add cost per kg
+											numberOfMeals: mealCount,
 										}
 									})
 									.filter(Boolean)
@@ -548,15 +621,25 @@ export const usePlannerStore = create<PlannerStore>()(
 							updates.mealsPerDay !== undefined
 						) {
 							state.currentPlan.items.forEach((item) => {
-								// Preserve quantity per meal but update total based on new duration/meals
+								// Preserve quantity per meal and number of meals but update total based on new meal count
 								const durationDays =
 									updates.durationDays || state.currentPlan!.durationDays
 								const mealsPerDay =
 									updates.mealsPerDay || state.currentPlan!.mealsPerDay
+								const totalMeals = durationDays * mealsPerDay
+
+								// Adjust numberOfMeals if it exceeds the new total meals
+								if (item.numberOfMeals > totalMeals) {
+									item.numberOfMeals = totalMeals
+								}
+
+								// Recalculate total quantity based on meals this food appears in
 								item.totalQuantity = item.quantityPerMeal.mul(
-									durationDays * mealsPerDay
+									item.numberOfMeals
 								)
-								item.totalCost = item.cost.mul(item.totalQuantity)
+								item.totalCost = item.cost
+									.div(item.weight)
+									.mul(item.totalQuantity)
 							})
 
 							// Recalculate total plan cost
@@ -605,7 +688,7 @@ export const usePlannerStore = create<PlannerStore>()(
 				}
 			},
 
-			addFoodItem: (foodItem, quantityPerMeal) => {
+			addFoodItem: (foodItem, quantityPerMeal, numberOfMeals) => {
 				const { currentPlan } = get()
 				if (!currentPlan) return
 
@@ -615,10 +698,15 @@ export const usePlannerStore = create<PlannerStore>()(
 						? quantityPerMeal
 						: new Decimal(quantityPerMeal)
 
-				// Calculate total quantity based on plan duration and meals per day
-				const totalQuantity = decimalQuantity.mul(
-					currentPlan.durationDays * currentPlan.mealsPerDay
-				)
+				// Determine how many meals this food will be used in
+				const totalMeals = currentPlan.durationDays * currentPlan.mealsPerDay
+				const mealCount =
+					numberOfMeals !== undefined
+						? Math.min(numberOfMeals, totalMeals) // Don't exceed total meals
+						: totalMeals // Default: use in all meals
+
+				// Calculate total quantity based on quantity per meal and number of meals
+				const totalQuantity = decimalQuantity.mul(mealCount)
 
 				// Calculate cost per gram/ounce (package cost divided by package weight)
 				const costPerUnit = new Decimal(foodItem.cost).div(foodItem.weight)
@@ -659,7 +747,8 @@ export const usePlannerStore = create<PlannerStore>()(
 					quantityPerMeal: decimalQuantity,
 					totalQuantity,
 					totalCost,
-					costPerKg, // Add cost per kg for display
+					costPerKg,
+					numberOfMeals: mealCount,
 				}
 
 				// Save current state to history
@@ -699,10 +788,12 @@ export const usePlannerStore = create<PlannerStore>()(
 						)
 						if (itemIndex === -1) return
 
-						// Calculate new total quantity based on plan duration and meals per day
-						const totalQuantity = decimalQuantity.mul(
-							state.currentPlan.durationDays * state.currentPlan.mealsPerDay
-						)
+						// Keep the same number of meals, just update the quantity per meal
+						const numberOfMeals =
+							state.currentPlan.items[itemIndex].numberOfMeals
+
+						// Calculate new total quantity based on quantity per meal and number of meals
+						const totalQuantity = decimalQuantity.mul(numberOfMeals)
 
 						// Calculate cost per gram/ounce (package cost divided by package weight)
 						const costPerUnit = state.currentPlan.items[itemIndex].cost.div(
@@ -717,7 +808,52 @@ export const usePlannerStore = create<PlannerStore>()(
 						state.currentPlan.items[itemIndex].totalQuantity = totalQuantity
 						state.currentPlan.items[itemIndex].totalCost =
 							costPerUnit.mul(totalQuantity)
-						state.currentPlan.items[itemIndex].costPerKg = costPerKg // Add cost per kg
+						state.currentPlan.items[itemIndex].costPerKg = costPerKg
+
+						// Recalculate total plan cost
+						recalculateTotalCost(state.currentPlan)
+						state.currentPlan.updatedAt = new Date()
+					}
+				})
+			},
+
+			updateFoodItemMealCount: (foodItemId, mealCount) => {
+				const { currentPlan } = get()
+				if (!currentPlan) return
+
+				// Save current state to history
+				set((state) => {
+					if (state.currentPlan) {
+						state.history.past.push(state.currentPlan)
+						state.history.future = []
+
+						const itemIndex = state.currentPlan.items.findIndex(
+							(item) => item.id === foodItemId
+						)
+						if (itemIndex === -1) return
+
+						const totalMeals =
+							state.currentPlan.durationDays * state.currentPlan.mealsPerDay
+						// Ensure meal count doesn't exceed total meals in plan
+						const validMealCount = Math.min(mealCount, totalMeals)
+
+						// Keep the same quantity per meal, update the number of meals and total
+						const quantityPerMeal =
+							state.currentPlan.items[itemIndex].quantityPerMeal
+
+						// Calculate new total quantity based on quantity per meal and number of meals
+						const totalQuantity = quantityPerMeal.mul(validMealCount)
+
+						// Calculate cost per gram/ounce (package cost divided by package weight)
+						const costPerUnit = state.currentPlan.items[itemIndex].cost.div(
+							state.currentPlan.items[itemIndex].weight
+						)
+
+						// Update the item
+						state.currentPlan.items[itemIndex].numberOfMeals = validMealCount
+						state.currentPlan.items[itemIndex].totalQuantity = totalQuantity
+						state.currentPlan.items[itemIndex].totalCost =
+							costPerUnit.mul(totalQuantity)
 
 						// Recalculate total plan cost
 						recalculateTotalCost(state.currentPlan)
