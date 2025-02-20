@@ -488,22 +488,22 @@ export const usePlannerStore = create<PlannerStore>()(
 
 						// Update saved plans list if this is a new plan
 						if (!currentPlan.id) {
-							state.savedPlans.push(processedPlan)
+							// Create a new array with the new plan at the start
+							const newPlans = [processedPlan];
+							state.savedPlans = newPlans.concat(state.savedPlans);
 						} else {
 							// Update existing plan in savedPlans
-							const index = state.savedPlans.findIndex(
-								(p) => p.id === processedPlan.id
-							)
-							if (index !== -1) {
-								state.savedPlans[index] = processedPlan
-							}
+							state.savedPlans = state.savedPlans.map((plan) =>
+								plan.id === processedPlan.id ? processedPlan : plan
+							);
 						}
 
-						state.isLoading = false
-
-						// Add to history
-						state.history.past.push(processedPlan)
-						state.history.future = []
+						state.isLoading = false;
+						// Update history
+						state.history = {
+							past: [...state.history.past, processedPlan],
+							future: [],
+						};
 					})
 				} catch (error) {
 					console.error('Error saving meal plan:', error)
