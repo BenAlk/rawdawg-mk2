@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { authOptions } from '../auth/[...nextauth]/auth'
 
 // Schema for validating dog creation/update
 const dogSchema = z.object({
@@ -22,7 +24,18 @@ const dogSchema = z.object({
 
 export async function GET(request: NextRequest) {
 	try {
+		// Get the authenticated user's session
+		const session = await getServerSession(authOptions)
+
+		if (!session?.user) {
+			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+		}
+
+		// Only return the dogs owned by the current user
 		const dogs = await prisma.dog.findMany({
+			where: {
+				userId: session.user.id,
+			},
 			orderBy: { name: 'asc' },
 		})
 
@@ -35,13 +48,24 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
 	try {
+		// Get the authenticated user's session
+		const session = await getServerSession(authOptions)
+
+		if (!session?.user) {
+			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+		}
+
 		const body = await request.json()
 
 		// Validate request body
 		const validatedData = dogSchema.parse(body)
 
+		// Create the dog with the user ID
 		const newDog = await prisma.dog.create({
-			data: validatedData,
+			data: {
+				...validatedData,
+				userId: session.user.id, // Associate with the current user
+			},
 		})
 
 		return NextResponse.json(newDog, { status: 201 })

@@ -102,20 +102,20 @@ const decimalReviver = (_: string, value: any) => {
 
 export const usePlannerStore = create<PlannerStore>()(
 	persist(
-		immer((set, get) => ({
-			// Initial state
-			currentPlan: null,
-			savedPlans: [],
-			availableDogs: [],
-			availableFoods: [],
+		immer<PlannerStore>((set, get) => ({
+			// Initial state with explicit types
+			currentPlan: null as PlannerMealPlan | null,
+			savedPlans: [] as PlannerMealPlan[],
+			availableDogs: [] as Dog[],
+			availableFoods: [] as FoodItem[],
 			history: {
-				past: [],
-				future: [],
+				past: [] as PlannerMealPlan[],
+				future: [] as PlannerMealPlan[],
 			},
 			isLoading: false,
 			error: null,
-			weightUnit: 'kg',
-			measureUnit: 'g',
+			weightUnit: 'kg' as const,
+			measureUnit: 'g' as const,
 			currency: 'GBP',
 
 			// Actions
@@ -299,7 +299,7 @@ export const usePlannerStore = create<PlannerStore>()(
 											totalCost: costPerUnit.mul(
 												new Decimal(item.totalQuantity || 0)
 											),
-											costPerKg: costPerKg, // Add cost per kg
+											costPerKg: costPerKg,
 											numberOfMeals: mealCount,
 										}
 									})
@@ -489,21 +489,21 @@ export const usePlannerStore = create<PlannerStore>()(
 						// Update saved plans list if this is a new plan
 						if (!currentPlan.id) {
 							// Create a new array with the new plan at the start
-							const newPlans = [processedPlan];
-							state.savedPlans = newPlans.concat(state.savedPlans);
+							const newPlans = [processedPlan]
+							state.savedPlans = newPlans.concat(state.savedPlans)
 						} else {
 							// Update existing plan in savedPlans
 							state.savedPlans = state.savedPlans.map((plan) =>
 								plan.id === processedPlan.id ? processedPlan : plan
-							);
+							)
 						}
 
-						state.isLoading = false;
+						state.isLoading = false
 						// Update history
 						state.history = {
 							past: [...state.history.past, processedPlan],
 							future: [],
-						};
+						}
 					})
 				} catch (error) {
 					console.error('Error saving meal plan:', error)
@@ -945,10 +945,8 @@ export const usePlannerStore = create<PlannerStore>()(
 				measureUnit: state.measureUnit,
 				currency: state.currency,
 			}),
-			// @ts-ignore - serialize and deserialize are valid but TypeScript doesn't recognize them
-			serialize: (state: Record<string, any>) =>
-				JSON.stringify(state, decimalReplacer),
-			deserialize: (str: string) => JSON.parse(str, decimalReviver),
+			serialize: (state) => JSON.stringify(state, decimalReplacer),
+			deserialize: (str) => JSON.parse(str, decimalReviver),
 		}
 	)
 )

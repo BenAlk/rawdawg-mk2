@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { authOptions } from '../../auth/[...nextauth]/auth'
 
 // Schema for dog updates
 const dogUpdateSchema = z.object({
@@ -23,12 +25,43 @@ const dogUpdateSchema = z.object({
 		.optional(),
 })
 
+// Helper function to verify dog ownership
+async function verifyDogOwnership(dogId: string, userId: string) {
+	const dog = await prisma.dog.findUnique({
+		where: { id: dogId },
+	})
+
+	if (!dog) {
+		return { error: 'Dog not found', status: 404 }
+	}
+
+	if (dog.userId !== userId) {
+		return { error: 'Unauthorized - you do not own this dog', status: 403 }
+	}
+
+	return { dog }
+}
+
 export async function GET(
 	request: NextRequest,
 	{ params }: { params: { id: string } }
 ) {
 	try {
 		const { id } = params
+		const session = await getServerSession(authOptions)
+
+		if (!session?.user) {
+			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+		}
+
+		// Verify ownership
+		const ownership = await verifyDogOwnership(id, session.user.id)
+		if (ownership.error) {
+			return NextResponse.json(
+				{ error: ownership.error },
+				{ status: ownership.status }
+			)
+		}
 
 		const dog = await prisma.dog.findUnique({
 			where: { id },
@@ -36,10 +69,6 @@ export async function GET(
 				mealPlans: true,
 			},
 		})
-
-		if (!dog) {
-			return NextResponse.json({ error: 'Dog not found' }, { status: 404 })
-		}
 
 		return NextResponse.json(dog)
 	} catch (error) {
@@ -54,19 +83,25 @@ export async function PATCH(
 ) {
 	try {
 		const { id } = params
+		const session = await getServerSession(authOptions)
+
+		if (!session?.user) {
+			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+		}
+
+		// Verify ownership
+		const ownership = await verifyDogOwnership(id, session.user.id)
+		if (ownership.error) {
+			return NextResponse.json(
+				{ error: ownership.error },
+				{ status: ownership.status }
+			)
+		}
+
 		const body = await request.json()
 
 		// Validate request body
 		const validatedData = dogUpdateSchema.parse(body)
-
-		// Check if dog exists
-		const existingDog = await prisma.dog.findUnique({
-			where: { id },
-		})
-
-		if (!existingDog) {
-			return NextResponse.json({ error: 'Dog not found' }, { status: 404 })
-		}
 
 		// Update the dog
 		const updatedDog = await prisma.dog.update({
@@ -94,14 +129,19 @@ export async function DELETE(
 ) {
 	try {
 		const { id } = params
+		const session = await getServerSession(authOptions)
 
-		// Check if dog exists
-		const existingDog = await prisma.dog.findUnique({
-			where: { id },
-		})
+		if (!session?.user) {
+			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+		}
 
-		if (!existingDog) {
-			return NextResponse.json({ error: 'Dog not found' }, { status: 404 })
+		// Verify ownership
+		const ownership = await verifyDogOwnership(id, session.user.id)
+		if (ownership.error) {
+			return NextResponse.json(
+				{ error: ownership.error },
+				{ status: ownership.status }
+			)
 		}
 
 		// Check if dog has meal plans
